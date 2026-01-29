@@ -5,7 +5,7 @@ This document defines the limits, risks, and ethical boundaries of the project b
 
 ## Step 1 — Problem Statement
 
-TorHubGen addresses the problem of ad-hoc, short-lived group communication setup under elevated risk, where manual Tor service configuration is error-prone and operational mistakes materially increase user exposure.
+TorHubGen addresses the problem of ad-hoc, short-lived group communication setup under elevated risk, where manual Tor service setup and teardown is error-prone and operational mistakes materially increase user exposure.
 
 The core problem is setup risk, not communication itself.
 
@@ -31,27 +31,34 @@ TorHubGen exists to reduce *avoidable operational mistakes* during setup and tea
 
 ### What the Tool Actually Does
 
-TorHubGen:
-- Generates a temporary, local configuration bundle for a Tor-based communication hub
-- Enforces time-bounded existence by default
-- Encodes explicit teardown paths into the workflow
-- Applies least-exposure defaults without user tuning
-- Makes unsafe configurations harder to produce than safe ones
-- Forces acknowledgment of limitations at generation time
+TorHubGen is a short-lived runtime appliance. When started, it:
+- Launches a local Tor process and publishes exactly one onion service
+- Hosts a minimal bulletin-board-style web application behind that onion service
+- The hosted bulletin board may optionally support ephemeral, session-scoped temporary private messages between active participants
+- Enforces a fixed lifetime chosen at startup (required; no indefinite mode)
+- Attempts automated teardown and data removal on exit and at expiration
 
-It is not a runtime system, not a hosting platform, and not a messaging app.
+If enabled, temporary private messages exist only for the lifetime of the running instance. They are not a core feature and do not change the primary bulletin-board function.
+
+It is explicitly not:
+- A general-purpose hosting platform
+- A persistent forum system
+- A messaging platform
+- A user-growth or community platform
 
 ### What This Is Not Solving
 
 This tool does not:
-- Create anonymity
-- Protect against compromised endpoints
+- Provide anonymity or confidentiality guarantees
+- Prevent harm from compromised endpoints
 - Prevent infiltration of trusted groups
-- Stop traffic analysis
+- Prevent traffic analysis or correlation
 - Defeat state-level surveillance
-- Secure user behavior outside the tool
-- Make Tor “easy” or “safe” for everyone
+- Prevent risky user behavior outside the tool
+- Make Tor approachable or appropriate for non-technical users
 Those are different problems and explicitly out of scope.
+
+A technically competent user could reproduce the same runtime system manually, but would be more likely to forget teardown or lifecycle limits.
 
 ### Why This Problem Is Legitimate
 
@@ -72,19 +79,23 @@ This project treats:
 - Explicit limitation as a requirement
 If TorHubGen cannot reduce net risk compared to manual setup, it should not exist.
 
-### Boundary of Responsibility
+### Runtime Responsibility Boundary
 
 TorHubGen is responsible for:
-- The correctness of what it generates
-- The clarity of what it warns about
-- The defaults it enforces
-- The assumptions it refuses to make
+- Starting the Tor process it launches
+- Exposing exactly one onion service
+- Enforcing the declared expiration time
+- Attempting teardown and data deletion on normal exit
+- Making teardown failure visible to the user
 
-It is not responsible for:
-- User operational discipline beyond generation
-- Endpoint security
-- Network environment
-- Adversary capabilities exceeding Tor’s model
+TorHubGen is not responsible for:
+- Guaranteeing data deletion under crashes, forced termination, or power loss
+- Preventing users from copying or redistributing content
+- Preventing harm from compromised hosts
+- Preventing traffic analysis or correlation
+- Determining whether use is appropriate for a given threat environment
+
+This boundary is intentionally uncomfortable: teardown is attempted, not guaranteed.
 
 ## Step 3 — Explicit Non-Goals
 
@@ -119,7 +130,7 @@ TorHubGen does not solve or provide protection against:
    - Language or cultural fingerprints
    - Rationale: Behavioral deanonymization is outside the tool’s control.
 
-5. **Legal, Policy, or Physical Protection**
+5. **Legal, Policy, or Physical Outcomes**
    - Legal immunity
    - Protection from arrest, detention, or coercion
    - Safety from physical surveillance or raids
@@ -145,26 +156,64 @@ TorHubGen does not solve or provide protection against:
    - Preventing redeployment in unsafe contexts
    - Rationale: The tool can discourage misuse, not enforce compliance.
 
+9. **Guarantees and Suitability Claims**
+    - Providing anonymity, confidentiality, or suitability guarantees
+    - Rationale: Claims of guarantees create false confidence.
+
+10. **Beginner-Targeted Positioning**
+    - Making Tor “easy” or appropriate for non-technical users
+    - Rationale: Lowering friction without transferring understanding increases misuse.
+
+11. **Long-Term Communities or Identities**
+    - Supporting long-term communities
+    - Supporting persistent identities across runs
+    - Rationale: Identity continuity increases correlation and normalization risk.
+
+12. **Moderation, Abuse Handling, or Governance Tools**
+    - Moderation workflows
+    - Abuse reporting or handling
+    - Governance features for communities
+    - Rationale: These expand responsibility and shift the tool toward a platform.
+
+13. **Clearnet Access or Hybrid Modes**
+    - Any clearnet access
+    - Any mixed Tor/non-Tor modes
+    - Rationale: Dual exposure materially increases user error and risk.
+
+14. **Persistence Beyond Declared Lifetime**
+    - Persisting content beyond the declared lifetime
+    - Reusing onion service keys across runs
+    - Rationale: Persistence undermines ephemerality by definition.
+
+15. **Messenger-Style Private Messaging**
+    - Persistent temporary private messaging
+    - Message history, inboxes, or archives
+    - Offline delivery or guaranteed delivery
+    - End-to-end encryption guarantees
+    - Confidentiality guarantees beyond Tor transport
+    - Identity verification or protection in private messages
+    - Rationale: These properties create a messenger-style system and expectations of confidentiality that TorHubGen does not and cannot provide.
+
 ### Explicit Rejections (Design-Level)
 
 The following must not be added later:
-- “One-click secure chat” framing
-- Claims of “hardened anonymity”
-- “Safer than Tor alone” marketing language
+- “One-click messaging” framing
+- Claims of hardened anonymity
+- “Lower-risk than Tor alone” marketing language
 - Auto-renewing onion services
 - Persistent identities across generations
 - Silent defaults that hide risk
-- “Beginner-friendly” positioning that implies safety
+- “Beginner-friendly” positioning that implies suitability
 If a feature reduces friction by hiding complexity, it is suspect.
 
 ### Non-Goals That Must Appear in Documentation
 
 These statements should be unavoidable in user-facing material:
-- “This tool does not protect against compromised devices.”
+- “This tool does not prevent harm from compromised devices.”
 - “This tool does not prevent identification through behavior.”
-- “This tool does not make Tor anonymous or safe.”
-- “This tool does not protect you from trusted participants.”
-- “This tool does not provide legal or physical protection.”
+- “This tool does not provide anonymity or confidentiality guarantees.”
+- “This tool does not prevent participants from copying or redistributing content.”
+- “This tool does not prevent legal or physical consequences.”
 
 If users skip these warnings, that is acceptable.
 If the tool omits them, that is not.
@@ -334,10 +383,10 @@ These risks must not be introduced, increased, or obscured by TorHubGen. If they
 
 U1. False Confidence Risk
     Any feature or language that causes users to believe:
-    They are anonymous
-    They are safe from identification
-    They are protected from insiders
-    They are protected from legal or physical harm
+    They have anonymity guarantees
+    They are unlikely to be identified
+    Insider misuse is prevented
+    Legal or physical consequences are prevented
 **Status:** Unacceptable under all circumstances.
 **Implication:** Features that *feel* reassuring but do not add real protection are rejected.
 
@@ -349,11 +398,11 @@ U2. Silent Persistence Risk
 **Implication:** Ephemerality must fail closed, not open.
 
 U3. Scope Creep into Messaging or Identity
-    Adding chat protocols
+    Adding messaging protocols
     Adding user accounts or handles
     Adding identity continuity across sessions
 **Status:** Unacceptable.
-**Implication:** TorHubGen is a generator only. Communication layers are out of scope.
+**Implication:** TorHubGen is a bulletin-board appliance only. Communication layers are out of scope.
 
 U4. Covert Expansion of Threat Surface
     Optional clearnet fallbacks
@@ -364,7 +413,7 @@ U4. Covert Expansion of Threat Surface
 **Implication:** There are no “expert-only” unsafe modes.
 
 U5. Normalization of Dangerous Use
-    Positioning the tool as beginner-safe
+    Positioning the tool as beginner-appropriate
     Encouraging use by people who do not understand the risks
     Framing that implies this is a default or recommended solution
 **Status:** Unacceptable.
@@ -381,7 +430,7 @@ U6. Ambiguous Responsibility Transfer
 The project should pause or halt if:
 - Users repeatedly misunderstand guarantees despite documentation
 - Reviewers identify unavoidable false-confidence effects
-- The generator becomes harder to reason about than manual setup
+- The appliance becomes harder to reason about than manual setup
 - Safety warnings must be hidden to preserve usability
 - The tool meaningfully lowers the barrier to dangerous behavior
 At that point, not shipping is the correct outcome.
@@ -402,94 +451,36 @@ This is the ethical backbone of the project.
 
 ### Governing Principle
 **Every additional feature is a liability unless it demonstrably reduces user harm.**
-The minimum viable design (MVD) is not about usefulness or adoption. It is about reducing setup mistakes without introducing new confidence or complexity. If manual setup is safer than the generated output, the design has failed.
+The minimum viable design (MVD) is not about usefulness or adoption. It is about reducing setup mistakes without introducing new confidence or complexity. If the generated output increases risk compared to manual setup, the design has failed.
 
-### Core Function (Irreducible)
+### Ephemeral Appliance Architecture
 
-At minimum, TorHubGen must do only the following:
-- Generate a temporary Tor onion service configuration
-- Bind that service to a single local endpoint
-- Constrain its lifetime
-- Make teardown explicit and visible
-- Expose limitations before generation
+The system is an ephemeral runtime appliance with the following non-negotiable constraints:
+- The system runs only for a fixed, declared duration.
+- The duration is mandatory; no indefinite mode exists.
+- Exactly one local web service is exposed via Tor.
+- All runtime state exists only for the lifetime of execution.
+- Onion service keys are freshly generated per run.
+- Teardown is automatic on expiration or termination signals.
+- Failure to attempt teardown is treated as an error condition.
 
-Nothing else is required to justify the project’s existence.
+Any design that introduces persistence beyond the declared lifetime is invalid by definition.
 
-### Required Design Characteristics
+This architecture is intentionally narrow. A technically competent user could implement the same system manually; the value of TorHubGen is in reducing missed teardown and lifecycle mistakes, not in adding new guarantees.
 
-These are non-optional properties of the design.
+### Ephemeral Private Messaging Constraints
 
-#### A. Generator-Only Architecture
-- Produces files, scripts, or instructions
-- Does not run as a daemon
-- Does not host services
-- Does not manage runtime state
-**Reason:** Runtime systems accumulate responsibility, persistence, and hidden state.
+If temporary private messages are supported, they must obey all of the following constraints:
+- Messages exist only in memory or within the same ephemeral data scope as the board.
+- Messages are destroyed automatically when the board expires or terminates.
+- No temporary private messages persist beyond the declared lifetime.
+- No inboxes, queues, retries, or offline delivery exist.
+- No long-lived identities, accounts, or handles are created.
+- Temporary private messaging is disabled by default.
+- Enabling temporary private messaging requires explicit user action at startup.
+- Temporary private messaging must not extend the board’s lifetime.
 
-#### B. Explicit Ephemerality
-- A defined expiration time is mandatory
-- No “infinite” or “until stopped” defaults
-- Expiration must be visible to the user
-- Teardown instructions must be generated alongside setup
-**Reason:** Most harm comes from “temporary” things becoming permanent.
-
-#### C. Least-Exposure Defaults
-- Single onion service
-- Single purpose
-- Minimal ports
-- No optional public exposure
-- No discovery mechanisms
-**Reason:** Breadth increases blast radius.
-
-#### D. No Identity Continuity
-- No reuse of keys across generations
-- No persistent identifiers
-- No naming schemes that imply continuity
-- No convenience reuse mechanisms
-**Reason:** Continuity enables correlation and false familiarity.
-
-#### E. Minimal On-Disk Artifacts
-- Only what Tor strictly requires
-- No logging by default
-- No telemetry
-- No analytics
-- Clear identification of what must be deleted
-**Reason:** Post-compromise inspection is a realistic threat.
-
-#### F. Forced Acknowledgment of Limits
-Before generation, the user must be exposed to:
-- What the tool does not protect against
-- What mistakes it cannot prevent
-- What risks remain unchanged
-This may be textual, interactive, or procedural — but not silent.
-**Reason:** Silence creates implied guarantees.
-
-### Explicitly Excluded From the Minimum Design
-These are not part of the MVD and should be resisted even later.
-- Messaging layers or protocols
-- Chat UIs or web apps
-- User authentication systems
-- Group management features
-- Key distribution automation
-- Monitoring or “health” dashboards
-- Auto-updates or background behavior
-- “Beginner-friendly” abstractions
-Each of these increases responsibility and misinterpretation risk.
-
-### Acceptable Output Forms
-TorHubGen may output:
-- A directory with:
-    - Tor configuration files
-    - A README specific to that instance
-    - A teardown checklist
-- A one-shot script that:
-    - Generates configs
-    - Clearly documents what it does and does not do
-
-It should not output:
-- Long-running services
-- Encrypted archives that encourage reuse
-- Anything opaque to inspection
+Any private messaging feature that introduces persistence, identity continuity, or expectations of confidentiality is invalid by definition.
 
 ### Human-Factors Constraints
 The design must assume users:
@@ -498,7 +489,7 @@ The design must assume users:
 - Are afraid
 - May not read everything carefully
 Therefore:
-- Safety must be hard to bypass accidentally
+- Risk-increasing options must be hard to enable accidentally
 - Dangerous options must require friction
 - Defaults must be conservative, not flexible
 - Failure should be obvious, not silent
@@ -553,10 +544,10 @@ These are failures introduced by TorHubGen itself.
     - Comments explaining what is generated and why
 
 ### F3 — Implicit Guarantees via UX or Language
-- **Description:** Tool wording, prompts, or defaults imply safety, anonymity, or protection.
+- **Description:** Tool wording, prompts, or defaults imply reduced risk, anonymity guarantees, or confidentiality.
 - **Risk:** False confidence leads to riskier behavior.
 - **Mitigation requirements:**
-    - Avoid terms like “secure,” “safe,” or “anonymous”
+    - Avoid language that implies guarantees, confidentiality, or reduced risk
     - Include explicit limitation statements at generation time
     - Treat reassurance as a hazard
 
@@ -569,6 +560,16 @@ These are failures introduced by TorHubGen itself.
     - Clear documentation of expected listening behavior
 
 This failure mode is catastrophic and must be treated with highest priority.
+
+### F10 — Misinterpretation of Private Messaging
+
+- **Description:** Users treat temporary private messages as confidential or lower-risk than public posts.
+- **Risk:** Users share sensitive information under false assumptions.
+- **Mitigation requirements:**
+    - Label the feature explicitly as “Temporary Private Messages”
+    - Display ephemerality and limitation warnings inside the temporary private messaging interface
+    - Reiterate that messages may be copied, recorded, or observed
+- **Residual risk:** Users may still assume confidentiality. This is acknowledged, not solved.
 
 ### 6.4 User-Driven Failure Modes
 
@@ -596,6 +597,14 @@ These failures occur due to user behavior outside the tool’s control.
     - Repetition of non-goals
     - Language emphasizing assistance, not protection
     - Avoid branding that implies safety
+
+### F11 — Private Message Leakage
+
+- **Description:** Recipients copy, screenshot, record, or redistribute temporary private messages.
+- **Risk:** Exposure identical to public content leakage.
+- **Mitigation requirements:**
+    - Explicit warnings that temporary private messages do not prevent recipients from copying, recording, or redistributing them
+    - No language implying trust or discretion
 
 ### 6.5 Environmental Failure Modes
 These arise from the broader environment.
@@ -649,15 +658,15 @@ The following statements—or functionally equivalent language—must appear:
 
 ### A. Scope and Purpose
 
-> “TorHubGen helps reduce configuration mistakes when creating short-lived Tor onion services.
-> It does not make communication anonymous, safe, or secure.”
+> “TorHubGen helps reduce configuration mistakes when running a short-lived onion-service bulletin board appliance.
+> It does not provide anonymity or confidentiality guarantees.”
 
 ### B. Non-Protection Warnings
 
-> “This tool does not protect you if your device is compromised.”
-> “This tool does not protect you from other participants.”
-> “This tool does not protect you from identification through behavior.”
-> “This tool does not provide legal or physical protection.”
+> “This tool does not prevent harm if your device is compromised.”
+> “This tool does not prevent other participants from copying or redistributing content.”
+> “This tool does not prevent identification through behavior.”
+> “This tool does not prevent legal or physical consequences.”
 
 These must be plain statements, not footnotes or conditionals.
 
@@ -670,24 +679,27 @@ This language should frame teardown as risk reduction, not housekeeping.
 
 ### D. Responsibility Boundary
 
-> “Using this tool does not transfer responsibility for safety away from you.”
-> “The generator cannot evaluate your threat environment.”
+> “Using this tool does not transfer responsibility for risk management away from you.”
+> “The appliance cannot evaluate your threat environment.”
+
+### Private Messaging Warning
+
+> “Temporary private messages are temporary and exist only while this board is running.
+> They are not confidential.
+> Other participants can copy, record, or redistribute them.”
 
 Avoid phrases that suggest the tool “handles” or “manages” risk.
 
 ### 7.3 Language That Must Be Avoided (Hard Prohibitions)
 
 The following terms or implications are not allowed anywhere:
-- “Secure”
-- “Safe”
-- “Anonymous”
-- “Hardened”
-- “Protected”
-- “Trustless”
-- “Military-grade”
-- “Beginner-friendly”
-- “One-click”
-- “Set and forget”
+- Claims of anonymity or confidentiality guarantees
+- Claims that temporary private messages are confidential or lower-risk than public posting
+- Marketing-style reassurance
+- “Hardened” or “military-grade” claims
+- “Beginner-friendly” positioning that implies suitability
+- “One-click” framing
+- “Set and forget” framing
 
 If a sentence feels reassuring, it should be rewritten.
 
@@ -734,7 +746,7 @@ Variation in wording is acceptable; dilution is not.
 
 Before output is produced, the tool should present language equivalent to:
 
-> “Proceed only if you understand that this tool does not make you anonymous, does not protect you from other participants, and does not protect you if your device is compromised.
+> “Proceed only if you understand that this tool does not provide anonymity or confidentiality guarantees, does not prevent other participants from copying or redistributing content, and does not prevent harm if your device is compromised.
 > If this is not acceptable, do not use the generated output.”
 
 This is not consent theater; it is harm reduction.
