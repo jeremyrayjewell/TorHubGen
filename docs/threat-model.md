@@ -1,32 +1,47 @@
-# Threat Model
-This document defines the limits, risks, and ethical boundaries of the project before any code exists. It exists to prevent the tool from creating false confidence or increasing harm through misuse. Code that violates this document is considered incorrect by definition.
+# TorHubGen — Technical Threat Model and Design Constraints
 
-**Intended audience:** This document is written for technically competent users who already understand Tor’s limitations. It is not a recommendation to use Tor, onion services, or this tool in any context. The existence of this tool does not imply that its use is advisable in any given situation.
+This document is the technical specification for TorHubGen’s operating envelope. If implementation or documentation contradicts this document, the implementation/documentation is nonconforming by definition.
 
-## Step 1 — Problem Statement
+**Audience:** operators and reviewers who already understand Tor onion service limitations.
 
-TorHubGen reduces avoidable setup/teardown mistakes when running ad-hoc, short-lived group communication under elevated risk. The core problem is operational error under stress (especially teardown), not adding communication features.
+Normative language: the keywords **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are used as requirement levels.
 
-TorHubGen is a short-lived runtime appliance: it launches a local Tor process and publishes exactly one onion service, hosts a minimal bulletin-board web app behind that onion service, may optionally provide ephemeral session-scoped temporary private messages between active participants, enforces a fixed lifetime chosen at startup (required; no indefinite mode), and attempts teardown and data removal on exit and at expiration.
+## Step 1 — System Overview
 
-If enabled, temporary private messages exist only for the lifetime of the running instance and do not change the primary bulletin-board goal.
+TorHubGen is a short-lived runtime appliance. A conforming implementation MUST:
+- Launch a local Tor process.
+- Publish exactly one onion service.
+- Host a minimal bulletin-board web app behind the onion service.
+- Enforce a fixed lifetime (mandatory; no indefinite mode).
+- Attempt teardown and data removal on exit and at expiration.
 
-It is not a general-purpose hosting platform, persistent forum, messaging platform, or community system.
+Optionally, the bulletin board MAY expose a **transient message buffer** (“Temporary Private Messages”) for active participants. If implemented, it MUST be RAM-scoped (or equivalent ephemeral scope) and inherit the same process lifecycle as the board.
 
-## Step 2 — Ethical Framing
+Non-goal by design: general-purpose hosting, persistence, identity systems, or feature growth.
 
-False confidence is treated as a hazard; over-capability is treated as risk. Simplicity and explicit limitation are requirements. If TorHubGen cannot reduce net risk compared to manual setup, it should not exist.
+## Step 2 — Runtime Lifecycle and Data Volatility
 
 ### Runtime Responsibility Boundary
 
-- **TorHubGen does:** start Tor, expose exactly one onion service, enforce expiration, attempt teardown/data deletion on normal exit, and make teardown failure visible.
-- **TorHubGen does not:** guarantee deletion under crashes/forced termination/power loss; stop copying/redistribution; prevent harm from compromised hosts; prevent traffic analysis/correlation; determine suitability for a given threat environment.
+TorHubGen MUST:
+- Start Tor.
+- Expose exactly one onion service.
+- Enforce expiration.
+- Attempt teardown and data deletion on normal exit.
+- Make teardown failure visible.
 
-Teardown is attempted, not guaranteed.
+TorHubGen MUST NOT claim or imply that it:
+- Guarantees deletion under crashes/forced termination/power loss.
+- Stops copying/redistribution.
+- Prevents harm from compromised hosts.
+- Prevents traffic analysis/correlation.
+- Determines suitability for a given threat environment.
 
-## Step 3 — Explicit Non-Goals
+Teardown is a best-effort cleanup path. It can be skipped or partially executed under crash, power loss, forced termination, kernel panic, or storage failures.
 
-TorHubGen does not solve or prevent the following classes of problems. These are not “limitations to fix later”; they are scope boundaries.
+## Step 3 — Out of Scope (Non-Goals)
+
+These items are explicitly out of scope and are not “later improvements.”
 
 - **Endpoints:** compromised devices, browsers, OS/hardware/firmware.
 - **Trust failures:** infiltration/coercion; participants leaking URLs/credentials/content; social engineering.
@@ -41,162 +56,122 @@ TorHubGen does not solve or prevent the following classes of problems. These are
 - **Persistence/communities:** persistent identities or communities across runs.
 - **Moderation/governance:** abuse handling, governance tooling.
 - **Clearnet/hybrid:** any clearnet exposure or mixed Tor/non-Tor operation.
-- **Persistence beyond lifetime:** persisting content, onion service keys, or runtime state beyond the declared duration.
+- **Persistence beyond declared lifetime:** persisting content, onion service keys, or runtime state beyond the declared duration.
 - **Messenger-style private messaging:** persistence/history/inbox; offline delivery; delivery guarantees; end-to-end encryption guarantees; secrecy guarantees beyond Tor transport; identity verification or identity concealment in temporary private messages.
 
-### Explicit Rejections (Design-Level)
+### Rejected Designs
 
-The following must not be added later (even if requested):
-- “One-click” framing or marketing reassurance
-- Claims that use is “lower-risk than Tor alone”
-- Auto-renewing onion services, silent persistence, or silent defaults
-- Persistent identities across runs or beginner-friendly positioning
+- Auto-renewing onion services or silent persistence.
+- Silent defaults that hide risk.
+- “One-click” framing or marketing reassurance.
+- Persistent identities across runs.
 
-## Step 4 — Guiding Principles and Attacker Models
+## Step 4 — Attacker Models (Defensive Posture)
 
-Assume asymmetric power and partial visibility; assume human error dominates; avoid designing for “ultimate adversaries” if doing so increases user risk or false confidence.
+A conforming design MUST assume attackers are asymmetric (time/tooling/patience) and that visibility is partial. The design MUST bias toward preventing misconfiguration and persistence.
 
-### Attacker Model A — Opportunistic Network Observer
-- **Capabilities:** local observation of timing/volume/destination metadata.
-- **Design:** prevent non-Tor bindings; avoid dual-homing/clearnet fallback; make Tor-only operation default and visible.
+### A — Opportunistic Network Observer
+- The design MUST assume local observation of timing/volume/destination metadata.
+- The implementation MUST use Tor-only bindings.
+- The system MUST NOT provide clearnet fallback or dual-mode operation.
+- The UI/UX SHOULD make Tor-only operation visible.
 
-### Attacker Model B — Passive Long-Term Observer
-- **Capabilities:** long-term observation and timing/volume correlation.
-- **Design:** discourage reuse; default to short lifetimes; avoid persistent identifiers; make teardown explicit.
+### B — Passive Long-Term Observer
+- The design MUST assume long-term observation and timing/volume correlation.
+- The system MUST enforce short lifetimes and discourage reuse.
+- The implementation MUST avoid persistent identifiers across runs.
 
-### Attacker Model C — Active Network Interferer (Limited)
-- **Capabilities:** blocks/throttles/disrupts Tor; DoS; induces user error.
-- **Design:** refuse clearnet fallback; avoid “temporary debug” modes that persist; warn against bypass.
+### C — Active Network Interferer (Limited)
+- The design MUST assume blocking/throttling/disruption of Tor, DoS, and induced user error.
+- Documentation/UX MUST NOT include clearnet fallback guidance.
+- The system MUST avoid “temporary debug” modes that create persistence.
+- Documentation/UX SHOULD warn against bypass workarounds.
 
-### Attacker Model D — Malicious or Compromised Insider
-- **Capabilities:** legitimate access; leaks URLs/credentials/content; logs/copies data.
-- **Design:** assume leaks; avoid one leak compromising future sessions; avoid persistent identities/shared secrets; keep group-size assumptions explicit and small.
+### D — Malicious or Compromised Insider
+- The design MUST assume legitimate access with leakage of URLs/credentials/content and logging/copying by participants.
+- The system MUST assume leaks and MUST NOT rely on participant discretion.
+- One leak MUST NOT compromise future sessions.
+- Documentation/UX SHOULD keep group-size assumptions explicit and small.
 
-### Attacker Model E — Post-Compromise Investigator
-- **Capabilities:** after-the-fact device access; inspects logs/configs/files/timestamps; may have legal/coercive authority.
-- **Design:** minimize on-disk artifacts; make cleanup explicit; avoid silent logs; prefer stateless/easily purged outputs.
+### E — Post-Compromise Investigator
+- The design MUST assume after-the-fact device access to logs/configs/files/timestamps, including legal/coercive authority.
+- The implementation SHOULD minimize on-disk artifacts.
+- The system MUST make cleanup explicit.
+- The system MUST avoid silent logs.
 
-### Explicitly Out-of-Scope Adversaries
+This threat model MUST NOT claim to cover global active adversaries with full network control; endpoint compromise; hardware-level surveillance; coercive disclosure resistance; or large-scale infiltration/Sybil attacks.
 
-Out of scope: global active adversaries with full network control; endpoint compromise; hardware-level surveillance; coercive disclosure resistance; large-scale infiltration or Sybil attacks.
+## Step 5 — Architecture Decisions (Hard Constraints)
 
-## Step 5 — Risks and Design Constraints
+### Ephemeral Appliance Invariants
 
-### Framing Principle
-TorHubGen may exist only if it reduces avoidable operational mistakes without increasing user confidence beyond what Tor provides or expanding threat surface. Any risk introduced or amplified by TorHubGen is presumptively unacceptable unless explicitly justified and mitigated.
-
-### Acceptable Risks
-These risks are acknowledged and unavoidable; TorHubGen must not imply it removes them.
-
-Residual network-level risk (correlation/traffic analysis), insider misuse, endpoint compromise, unsafe user behavior (reuse/ignored teardown/risky workflows), and service disruption/DoS remain possible.
-
-### Unacceptable Risks (Hard Stops)
-
-These risks must not be introduced, increased, or obscured by TorHubGen. If they are, the design must change or the feature must be removed.
-
-- **U1 (false confidence):** language/UX implying guarantees, reduced identification likelihood, insider-misuse prevention, or avoided legal/physical consequences.
-- **U2 (silent persistence):** service/keys/config surviving past lifetime, auto-renewal, “just keep running”; ephemerality must fail closed.
-- **U3 (scope creep):** accounts/handles, identity continuity, or messenger-style properties (beyond the bulletin board + constrained temporary private messages).
-- **U4 (threat-surface expansion):** clearnet fallback, mixed Tor/non-Tor, unsafe flags, convenience bypass; no “expert-only” unsafe modes.
-- **U5 (normalization):** implied recommendation, beginner-appropriate framing, lowering the barrier to uninformed use.
-- **U6 (responsibility transfer):** implying the tool “handles” risk or shifting responsibility to software.
-
-### Risk That Triggers Project Pause or Redesign
-The project should pause or halt if:
-- Users repeatedly misunderstand guarantees despite documentation
-- Reviewers identify unavoidable false-confidence effects
-- The appliance becomes harder to reason about than manual setup
-- Safety warnings must be hidden to preserve usability
-- The tool meaningfully lowers the barrier to dangerous behavior
-If any of these occur, pausing or not shipping is the correct outcome.
-
-### Ephemeral Appliance Architecture
-The system is an ephemeral runtime appliance with non-negotiable constraints: it runs only for a fixed declared duration (mandatory; no indefinite mode), exposes exactly one local web service via Tor, keeps runtime state only for the lifetime of execution, generates onion service keys per run, performs teardown automatically on expiration/termination signals, and treats failure to attempt teardown as an error condition.
+The runtime appliance MUST:
+- Run only for a fixed declared duration (mandatory; no indefinite mode).
+- Expose exactly one local web service via Tor, and exactly one onion service.
+- Keep runtime state only for the lifetime of execution.
+- Generate onion service keys per run.
+- Attempt teardown automatically on expiration and termination signals; failure to attempt teardown is an error condition.
 
 Any design that introduces persistence beyond the declared lifetime is invalid by definition.
 
-Value is reducing missed teardown and lifecycle mistakes, not adding guarantees.
+### Stop-Ship Gate
 
-### Ephemeral Private Messaging Constraints
-If temporary private messages are supported, they must be ephemeral within the same data scope as the board (in-memory or equivalent), be destroyed when the board expires/terminates, never persist beyond the declared lifetime, have no inbox/queue/retry/offline delivery, create no long-lived identities/accounts/handles, be disabled by default and only enabled by explicit user action at startup, and must not extend the board’s lifetime.
+Treat these as engineering stop conditions:
+- Users repeatedly misinterpret constraints despite being shown them.
+- Required constraints must be hidden to preserve usability.
+- The appliance becomes harder to reason about than manual setup.
+- The design lowers the barrier to dangerous misuse (in practice).
 
-Any private messaging feature that introduces persistence, identity continuity, or expectations of confidentiality is invalid by definition.
+### Transient Message Buffer (Temporary Private Messages)
 
-### Human-Factors Constraints
-Assume users are stressed/tired/afraid and may not read carefully. Defaults must be conservative; risky options must require friction; failure must be obvious.
+If enabled, temporary private messages are a transient message buffer scoped to the running process (RAM or equivalent ephemeral scope). The implementation MUST satisfy all of the following:
+- The buffer MUST be destroyed when the board expires/terminates.
+- Messages MUST NOT persist beyond the declared lifetime.
+- The system MUST NOT provide an inbox, queue, retries, or offline delivery.
+- The system MUST NOT create long-lived identities/accounts/handles.
+- Temporary private messages MUST be disabled by default.
+- Enabling temporary private messages MUST require explicit startup action.
+- Enabling temporary private messages MUST NOT extend the board’s lifetime.
 
-### Definition of “Minimum” (Litmus Test)
-Keep components that reduce setup error or risk. Remove components that increase confidence without real risk reduction, or add complexity without safety value.
+Any temporary private messaging feature that introduces persistence, identity continuity, or expectations of confidentiality is invalid by definition.
 
-## Step 6 — Failure Modes
+## Step 6 — Failure Modes and Operational Limits
 
-### Policy
-- Unacceptable if silent, confidence-inflating, persistent without awareness, or expands exposure beyond manual Tor usage.
-- Tolerable only if visible/discoverable, not worse than manual setup, and pushes toward teardown rather than continuation.
+Policy: a failure mode is unacceptable if it is silent, confidence-inflating, persistent without awareness, or expands exposure beyond manual Tor usage.
 
-### Design-Level Failure Modes (introduced by TorHubGen)
+### Design-Level
+- **F1 — Silent Persistence:** service outlives lifetime → system MUST enforce explicit expiration; teardown MUST be treated as mandatory; MUST NOT default to “until stopped”; MUST provide co-generated teardown steps.
+- **F2 — Overly Abstracted Output:** too opaque to verify → artifacts MUST be plain-text/inspectable and MUST explain what is generated and why.
+- **F3 — Implicit Guarantees via UX/Language:** prompts imply reduced risk/guarantees → UX copy MUST avoid guarantee language and MUST present limits at action time.
+- **F4 — Accidental Clearnet Exposure:** binds to non-Tor interfaces → bindings MUST be Tor-only; system MUST NOT provide fallback/dual-mode; documentation MUST state expected listening behavior.
+- **F10 — Misinterpretation of Transient Message Buffer:** treated as confidential/lower-risk → UI MUST label “Temporary Private Messages”; UI MUST show ephemerality/limits; UI MUST reiterate copying/recording/redistribution and that observation remains possible.
 
-- **F1 — Silent Persistence:** service outlives lifetime → require explicit expiration, mandatory teardown framing, no “until stopped”, co-generated teardown steps.
-- **F2 — Overly Abstracted Output:** too opaque to verify → require plain-text/inspectable artifacts and explanations.
-- **F3 — Implicit Guarantees via UX/Language:** prompts imply reduced risk/guarantees → avoid guarantee language; show limits at action time.
-- **F4 — Accidental Clearnet Exposure:** binds to non-Tor interfaces → Tor-only bindings; no fallback/dual-mode; document expected listening.
-- **F10 — Misinterpretation of Temporary Private Messages:** users treat as confidential/lower-risk → label “Temporary Private Messages”; show ephemerality/limits in UI; reiterate copying/recording/redistribution and observation remains possible.
+### User-Driven
+- **F5 — Reuse Beyond Intended Context:** reuse configs/keys/addresses → system MUST warn against reuse and MUST NOT provide tooling that encourages reuse.
+- **F6 — Combining with Unsafe Practices:** risky workflows → system MUST state it does not control user behavior and SHOULD provide non-operational examples.
+- **F7 — Misplaced Trust in the Tool:** treated as risk-handling layer → documentation/UX MUST repeat non-goals and MUST avoid language implying guarantees.
+- **F11 — Transient Message Buffer Leakage:** recipients copy/record/redistribute → UI MUST warn and MUST NOT imply discretion.
 
-### User-Driven Failure Modes (outside tool control)
+### Environmental
+- **F8 — Network Interference/Blocking:** disruption pushes workarounds → documentation MUST NOT include clearnet fallback guidance and MUST warn against “temporary” unsafe changes.
+- **F9 — Post-Compromise Discovery:** after-the-fact inspection → implementation SHOULD minimize on-disk artifacts; MUST identify files to delete; MUST avoid unnecessary logs.
+- **F12 — Crash/Power Loss:** cleanup doesn’t run → implementation SHOULD minimize writes and narrow ephemeral scope; UX MUST state teardown is best-effort.
+- **F13 — Best-Effort Teardown Limitations:** teardown is a cleanup path, not proof of deletion; it cannot execute under power loss/kernel panic and cannot retroactively remove copied data.
 
-- **F5 — Reuse Beyond Intended Context:** reuse configs/keys/addresses → warn against reuse; no tooling that encourages reuse.
-- **F6 — Combining with Unsafe Practices:** risky workflows → state tool doesn’t control behavior; give non-operational examples.
-- **F7 — Misplaced Trust in the Tool:** treated as risk-handling layer → repeat non-goals; emphasize assistance, not guarantees.
-- **F11 — Temporary Private Message Leakage:** recipients copy/record/redistribute → warnings; no language implying discretion.
+Severity policy: prevent clearnet exposure by design; make high-risk failures loud; state inevitable failures plainly.
 
-### Environmental Failure Modes
+## Step 7 — Operational Reality (Irreducible Constraints)
 
-- **F8 — Network Interference/Blocking:** disruption pushes workarounds → no clearnet fallback guidance; warn against “temporary” unsafe changes.
-- **F9 — Post-Compromise Discovery:** after-the-fact inspection → minimize on-disk artifacts; identify files to delete; avoid unnecessary logs.
-- **F12 — Abrupt Termination (Crash/Power Loss):** cleanup doesn’t run → minimal writes; narrow ephemeral scope; warn teardown is attempted, not guaranteed.
-- **F13 — Over-Trust in Teardown:** teardown treated as proof → best-effort language; visible failure when detectable; avoid “guaranteed deletion”.
+The following are implementation/UX constraints. They MUST appear in user-facing material at startup/config time and in the running instance UI (include the temporary private messages warning if enabled):
 
-### Severity Policy
-- Catastrophic failures (e.g., clearnet exposure) must be prevented by design.
-- High-risk failures must be loud and unavoidable.
-- Inevitable failures must be stated plainly.
-- Silent acceptance of risk is not acceptable.
+- The appliance does not provide identity concealment or message secrecy guarantees.
+- Compromised devices negate network-path properties.
+- Other participants can copy, record, or redistribute content.
+- Identification through behavior remains possible.
+- Legal/physical consequences remain possible.
+- Temporary services become riskier when they persist; teardown is best-effort, not guaranteed.
+- Temporary private messages exist only while the board is running, are not confidential, and can be copied/recorded/redistributed by recipients.
 
-## Step 7 — Safety Language
+### Disallowed Statements (Documentation/UX)
 
-Safety language must reduce false confidence, state limits plainly, and appear at moments of action (startup/UI), not only in docs.
-
-### Mandatory Safety Statements (Irreducible)
-
-The following statements—or functionally equivalent language—must appear in user-facing material:
-
-> “TorHubGen helps reduce configuration mistakes when running a short-lived onion-service bulletin board appliance.
-> It does not provide identity concealment or message secrecy guarantees.”
->
-> “This tool does not prevent harm if your device is compromised.”
-> “This tool does not prevent other participants from copying or redistributing content.”
-> “This tool does not prevent identification through behavior.”
-> “This tool does not prevent legal or physical consequences.”
->
-> “Temporary services become dangerous when they persist.”
-> “If you do not tear this down, risk increases over time.”
-> “Teardown is attempted, not guaranteed.”
->
-> “Using this tool does not transfer responsibility for risk management away from you.”
-> “The appliance cannot evaluate your threat environment.”
->
-> “Temporary private messages exist only while this board is running.
-> They are not confidential.
-> Other participants can copy, record, or redistribute them.”
-
-### Language That Must Be Avoided (Hard Prohibitions)
-
-Not allowed: guarantees or implied guarantees (including “lower-risk” claims), any claim that temporary private messages are confidential/lower-risk than public posting, marketing reassurance (e.g., “hardened”, “military-grade”, “set and forget”, “one-click”), or beginner-friendly positioning implying suitability.
-
-### Placement Requirements
-
-Safety language must appear in threat-model.md, the README, at startup/config time, and in the running instance UI (include the temporary private messages warning if enabled).
-
-### Safety Language as a Change Gate
-
-Any change that removes warnings, softens limitations, improves perceived safety without real changes, or improves usability at the cost of clarity must be treated as a security regression.
+Documentation/UX MUST NOT claim or imply guarantees, “lower-risk” operation, confidentiality for temporary private messages, marketing reassurance (e.g., “hardened”, “set and forget”, “one-click”), or beginner-friendly suitability.
