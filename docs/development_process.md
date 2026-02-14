@@ -1,52 +1,134 @@
-This document defines the development ordering, invariants, and stop-ship conditions for TorHubGen. It is binding for implementation decisions and must be reviewed alongside [`threat-model.md`](./threat-model.md).
+# TorHubGen Development Process
 
-# Purpose and Development Ordering
+This document defines the development ordering, invariants, validation requirements, and stop-ship conditions for TorHubGen. It is binding for implementation decisions and must be reviewed alongside [`threat-model.md`](./threat-model.md).
 
-TorHubGen development proceeds from control-plane correctness to application functionality.
+---
 
-No forum, messaging, or user-facing features may be implemented until the atomic lifecycle properties defined in [`threat-model.md`](./threat-model.md) are demonstrated and testable. The initial development focus is the appliance wrapper responsible for process-level ephemerality, enforced lifetime, and teardown.
+## 1. Development Ordering
 
-## Phase 1 Scope (Atomic Process)
-Phase 1 is complete when the following properties are demonstrated:
-- A private Tor instance can be launched with isolated state
+TorHubGen development proceeds strictly from **control-plane correctness** to **application functionality**.
+
+No forum, messaging, or user-facing features may be implemented until the atomic lifecycle properties defined in [`threat-model.md`](./threat-model.md) are:
+
+- Demonstrated
+- Empirically validated
+- Fail-closed under negative conditions
+
+The initial development focus is the appliance wrapper responsible for:
+
+- Process-level ephemerality
+- Enforced lifetime
+- Deterministic teardown
+- Explicit failure visibility
+
+---
+
+## 2. Phase 1 — Atomic Process
+
+### 2.1 Scope
+
+Phase 1 concerns only control-plane behavior.  
+No application-layer features are in scope.
+
+Phase 1 is complete when the following invariants are demonstrated:
+
+- A private Tor instance launches with isolated state
 - A V3 ephemeral onion service is created without writing private keys to disk
-- A mandatory lifetime is enforced
-- Teardown occurs on timer expiry, signal, or crash
-- Any failure to teardown is made explicitly visible
-- Unexpected Tor process termination causes immediate shutdown rather than silent continuation
+- A mandatory, bounded lifetime is enforced
+- Teardown occurs on:
+  - Timer expiry
+  - Operator signal
+  - Unexpected crash
+- Teardown failures are explicitly surfaced
+- Unexpected Tor termination causes immediate shutdown (no silent continuation)
 
-No application-layer features are in scope for Phase 1.
+---
 
-### Phase 1 Demonstration Status
+### 2.2 Demonstration and Validation Status
 
-Phase 1 has been **demonstrated on a host OS** and is considered complete.
+Phase 1 has been demonstrated on a host operating system without containers, sandboxes, or service managers. This ensures lifecycle and teardown behavior are directly observable and not abstracted by external tooling.
 
-The following properties were empirically observed during execution:
+The following behaviors were empirically validated:
 
-- Tor launches as a private instance with an isolated temporary `DataDirectory`
-- A V3 onion service is created via `ADD_ONION NEW:ED25519-V3 Flags=DiscardPK`
-- No onion private keys are written to disk
-- A mandatory lifetime is enforced via a monotonic timer
-- Shutdown occurs on lifetime expiry
-- Teardown is executed via a mandatory `finally` path
-- Teardown failures are emitted loudly
+#### Control-Plane Properties
+
+- Tor launches with an isolated temporary `DataDirectory`
+- Onion service created via:
+```
+ADD_ONION NEW:ED25519-V3 Flags=DiscardPK
+```
+- No onion private keys written to disk
 - ControlPort authentication is local-only and cookie-based
-- No application-layer services outlive the Tor process
-- Unexpected Tor process termination results in immediate shutdown
+- No application-layer service outlives the Tor process
 
-Phase 1 was validated without containers, sandboxes, or service managers,
-ensuring that process lifetime and teardown behavior are directly observable.
+#### Lifecycle Enforcement
 
-This milestone establishes the control-plane invariants required before
-any application-layer functionality may be introduced.
+- Mandatory lifetime enforced via monotonic timer
+- Shutdown on lifetime expiry
+- Shutdown on operator interrupt (SIGINT)
+- Immediate shutdown on unexpected Tor process termination
+- Misconfiguration results in fail-closed behavior
 
+#### Teardown Semantics
 
-### Packaging and Deployment Constraints (Phase 1)
+- Teardown executes via a mandatory `finally` path
+- Teardown distinguishes between:
+- Expected control-channel unavailability (Tor already exited)
+- True cleanup failures
+- True cleanup failures are emitted as fatal conditions
+- No silent suppression of cleanup errors
 
-Container-based or sandboxed packaging mechanisms (including Docker and Snap) are out of scope for Phase 1.
+---
 
-The atomic-process milestone must be validated on a host OS without packaging abstractions that may obscure process lifecycle, persistence, or teardown behavior.
+### 2.3 Stop-Ship Conditions (Phase 1)
 
-# Change Control
+The following conditions invalidate Phase 1 and block further development:
 
-Any change that weakens lifecycle guarantees, teardown visibility, or safety messaging requires revisiting both this document and `threat-model.md` before implementation.
+- Silent continuation after Tor process death
+- Onion key material written to persistent storage
+- Failure to enforce mandatory lifetime
+- Teardown failures not explicitly surfaced
+- Orphaned processes remaining after shutdown
+
+Phase 1 is considered complete only if none of these conditions occur under negative testing.
+
+---
+
+## 3. Packaging and Deployment Constraints
+
+For Phase 1:
+
+- Container-based or sandboxed packaging mechanisms (e.g., Docker, Snap) are out of scope.
+- Validation must occur on a host OS without lifecycle abstraction layers.
+- No service manager may supervise or restart the process during validation.
+
+This constraint ensures atomic process behavior is intrinsic, not delegated.
+
+---
+
+## 4. Change Control
+
+Any change that weakens:
+
+- Lifecycle guarantees
+- Teardown visibility
+- Fail-closed behavior
+- Safety messaging
+- Isolation properties
+
+requires revisiting both:
+
+- `development_process.md`
+- `threat-model.md`
+
+before implementation proceeds.
+
+Control-plane guarantees take precedence over feature development.
+
+---
+
+## 5. Phase 1 Status
+
+Phase 1 control-plane invariants have been validated and are considered complete.
+
+Application-layer development may proceed only insofar as it preserves these established lifecycle guarantees.

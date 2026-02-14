@@ -262,8 +262,15 @@ def teardown(state: ApplianceState) -> int:
 	# Return code indicates whether teardown was fully successful (0) or had failures (nonzero).
 	teardown_failed = False
 
+	tor_already_exited = (
+		state.tor_process is not None and state.tor_process.poll() is not None
+	)
+	if tor_already_exited:
+		_info("Tor already exited; control-channel cleanup skipped.")
+
 	# Best effort: remove onion before stopping Tor (not required for ephemerality, but clearer).
-	if state.controller is not None and state.onion_service_id is not None:
+	# If Tor already exited, the ControlPort is expected to be unavailable; skip control-channel cleanup.
+	if (not tor_already_exited) and state.controller is not None and state.onion_service_id is not None:
 		try:
 			state.controller.msg(f"DEL_ONION {state.onion_service_id}")
 		except Exception as exc:
@@ -286,17 +293,25 @@ def teardown(state: ApplianceState) -> int:
 
 	# Stop Tor via ControlPort if possible; otherwise terminate the process.
 	if state.controller is not None:
-		try:
-			state.controller.msg("SIGNAL SHUTDOWN")
-		except Exception as exc:
-			teardown_failed = True
-			_warn(f"Failed to send Tor SHUTDOWN via ControlPort: {exc}")
-		finally:
+		if tor_already_exited:
+			# Tor already exited; control connection may already be broken. Closing is best-effort and
+			# must not be classified as a teardown failure in this expected scenario.
 			try:
 				state.controller.close()
 			except Exception as exc:
+				_warn(f"Failed to close controller after Tor exit: {exc}")
+		else:
+			try:
+				state.controller.msg("SIGNAL SHUTDOWN")
+			except Exception as exc:
 				teardown_failed = True
-				_warn(f"Failed to close controller: {exc}")
+				_warn(f"Failed to send Tor SHUTDOWN via ControlPort: {exc}")
+			finally:
+				try:
+					state.controller.close()
+				except Exception as exc:
+					teardown_failed = True
+					_warn(f"Failed to close controller: {exc}")
 
 	if state.tor_process is not None:
 		try:
@@ -324,7 +339,7 @@ def teardown(state: ApplianceState) -> int:
 		_warn(f"Failed to delete temporary DataDirectory '{state.data_dir}': {exc}")
 
 	if teardown_failed:
-		_loud("TEARDOWN FAILURE: one or more cleanup steps failed (see warnings above)")
+		_loud("TEARDOWN FAILURE: one or more cleanup steps failed")
 		return 2
 	return 0
 
