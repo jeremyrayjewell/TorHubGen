@@ -1,5 +1,7 @@
 
 import argparse
+import datetime
+import json
 import os
 import re
 import shutil
@@ -11,8 +13,11 @@ import tempfile
 import threading
 import time
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
+
+import http.server
 
 
 try:
@@ -56,7 +61,7 @@ class ApplianceState:
 	control_port: int
 	controller: Optional[Controller]
 	onion_service_id: Optional[str]
-	web_process: Optional[subprocess.Popen]
+	web_server: Optional["WebServerHandle"]
 
 
 class ShutdownRequested(Exception):
@@ -122,7 +127,16 @@ def launch_private_tor(*, tor_cmd: Optional[str], data_dir: str) -> tuple[subpro
 def connect_controller(control_port: int) -> Controller:
 	controller = Controller.from_port(address="127.0.0.1", port=control_port)
 	controller.authenticate()  # cookie auth
+	_info(f"Connected to Tor ControlPort on 127.0.0.1:{control_port}")
 	return controller
+
+
+def _format_returncode(rc: Optional[int]) -> str:
+	if rc is None:
+		return "<running>"
+	if rc == 0:
+		return "0 (clean exit)"
+	return f"{rc} (abnormal exit)"
 
 
 # --- Ephemeral onion creation (V3 only, ephemeral only via ADD_ONION) ---
@@ -198,35 +212,273 @@ def add_ephemeral_v3_onion(*, controller: Controller, target_port: int) -> str:
 
 
 # --- Local web process (binds to 127.0.0.1 only) ---
-def launch_local_web_process(*, bind_host: str, port: int) -> subprocess.Popen:
+MAX_MESSAGES = 100
+MAX_MESSAGE_CHARS = 2000
+MAX_PSEUDONYM_CHARS = 32
+MAX_REQUEST_BODY_BYTES = 4096
+
+
+class MessageStore:
+	def __init__(self, *, max_messages: int) -> None:
+		self._messages: deque[dict] = deque(maxlen=max_messages)
+		self._lock = threading.Lock()
+
+	def add(self, message: dict) -> None:
+		with self._lock:
+			self._messages.append(message)
+
+	def list(self) -> list[dict]:
+		with self._lock:
+			return list(self._messages)
+
+	def clear(self) -> None:
+		with self._lock:
+			self._messages.clear()
+
+
+class TokenBucketRateLimiter:
+	"""In-memory, per-process token bucket limiter.
+
+	No IP-based keys are used. Keys are caller-supplied (e.g., pseudonym or a global key).
+	"""
+
+	def __init__(self, *, capacity: float, refill_per_second: float) -> None:
+		if capacity <= 0 or refill_per_second <= 0:
+			raise ValueError("Invalid rate limiter parameters")
+		self._capacity = float(capacity)
+		self._refill_per_second = float(refill_per_second)
+		self._state: dict[str, tuple[float, float]] = {}  # key -> (tokens, last_ts)
+		self._lock = threading.Lock()
+
+	def allow(self, key: str, *, cost: float = 1.0) -> bool:
+		now = time.monotonic()
+		with self._lock:
+			tokens, last_ts = self._state.get(key, (self._capacity, now))
+			elapsed = max(0.0, now - last_ts)
+			tokens = min(self._capacity, tokens + elapsed * self._refill_per_second)
+			if tokens < cost:
+				self._state[key] = (tokens, now)
+				return False
+			tokens -= cost
+			self._state[key] = (tokens, now)
+			return True
+
+
+class BulletinHTTPServer(http.server.HTTPServer):
+	def __init__(
+		self,
+		server_address: tuple[str, int],
+		RequestHandlerClass,
+		*,
+		store: MessageStore,
+		rate_limiter: TokenBucketRateLimiter,
+		max_body_bytes: int,
+	) -> None:
+		super().__init__(server_address, RequestHandlerClass)
+		self.store = store
+		self.rate_limiter = rate_limiter
+		self.max_body_bytes = int(max_body_bytes)
+
+
+class BulletinHandler(http.server.BaseHTTPRequestHandler):
+	server: BulletinHTTPServer  # type: ignore[assignment]
+
+	def log_message(self, fmt: str, *args) -> None:
+		# No request logging (and nothing written to disk).
+		return
+
+	def _send_bytes(self, *, status: int, body: bytes, content_type: str) -> None:
+		self.send_response(status)
+		self.send_header("Content-Type", content_type)
+		self.send_header("Content-Length", str(len(body)))
+		self.send_header("Cache-Control", "no-store")
+		self.end_headers()
+		self.wfile.write(body)
+
+	def _send_json(self, *, status: int, obj) -> None:
+		body = json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+		self._send_bytes(status=status, body=body, content_type="application/json; charset=utf-8")
+
+	def _send_error_json(self, *, status: int, message: str) -> None:
+		self._send_json(status=status, obj={"error": message})
+
+	def _read_body(self) -> Optional[bytes]:
+		content_length_raw = self.headers.get("Content-Length")
+		if content_length_raw is None:
+			self._send_error_json(status=411, message="Content-Length required")
+			return None
+		try:
+			content_length = int(content_length_raw)
+		except ValueError:
+			self._send_error_json(status=400, message="Invalid Content-Length")
+			return None
+		if content_length < 0:
+			self._send_error_json(status=400, message="Invalid Content-Length")
+			return None
+		if content_length > self.server.max_body_bytes:
+			# Reject early and close the connection; do not attempt to read an oversized payload.
+			self._send_error_json(status=413, message="Request body too large")
+			self.close_connection = True
+			return None
+		body = self.rfile.read(content_length)
+		if len(body) != content_length:
+			self._send_error_json(status=400, message="Incomplete request body")
+			return None
+		if b"\x00" in body:
+			self._send_error_json(status=400, message="Binary payload rejected")
+			return None
+		return body
+
+	def do_GET(self) -> None:
+		if self.path == "/":
+			html = (
+				"<!doctype html><meta charset='utf-8'>"
+				"<title>TorHubGen Phase 2</title>"
+				"<h1>TorHubGen Phase 2</h1>"
+				"<p>Ephemeral in-memory bulletin surface.</p>"
+				"<ul>"
+				"<li>GET /messages</li>"
+				"<li>POST /message (JSON: {content, pseudonym?})</li>"
+				"</ul>"
+			).encode("utf-8")
+			self._send_bytes(status=200, body=html, content_type="text/html; charset=utf-8")
+			return
+
+		if self.path == "/messages":
+			# Basic global rate limit on reads.
+			if not self.server.rate_limiter.allow("GET:/messages"):
+				self._send_error_json(status=429, message="Rate limit exceeded")
+				return
+			self._send_json(status=200, obj={"messages": self.server.store.list()})
+			return
+
+		self._send_error_json(status=404, message="Not found")
+
+	def do_POST(self) -> None:
+		if self.path != "/message":
+			self._send_error_json(status=404, message="Not found")
+			return
+
+		content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+		if content_type != "application/json":
+			self._send_error_json(status=415, message="Content-Type must be application/json")
+			return
+
+		body = self._read_body()
+		if body is None:
+			return
+		try:
+			text = body.decode("utf-8")
+		except UnicodeDecodeError:
+			self._send_error_json(status=400, message="Request body must be UTF-8 JSON")
+			return
+		try:
+			payload = json.loads(text)
+		except json.JSONDecodeError:
+			self._send_error_json(status=400, message="Invalid JSON")
+			return
+		if not isinstance(payload, dict):
+			self._send_error_json(status=400, message="JSON object required")
+			return
+
+		content = payload.get("content")
+		pseudonym = payload.get("pseudonym")
+
+		if not isinstance(content, str):
+			self._send_error_json(status=400, message="Field 'content' must be a string")
+			return
+		content = content.strip()
+		if not content:
+			self._send_error_json(status=400, message="Field 'content' is required")
+			return
+		if len(content) > MAX_MESSAGE_CHARS:
+			self._send_error_json(status=413, message="Message too long")
+			return
+
+		pseudo_key = "anon"
+		pseudo_value: Optional[str] = None
+		if pseudonym is not None:
+			if not isinstance(pseudonym, str):
+				self._send_error_json(status=400, message="Field 'pseudonym' must be a string")
+				return
+			pseudonym = pseudonym.strip()
+			if pseudonym:
+				if len(pseudonym) > MAX_PSEUDONYM_CHARS:
+					self._send_error_json(status=413, message="Pseudonym too long")
+					return
+				pseudo_value = pseudonym
+				pseudo_key = f"p:{pseudonym}"
+
+		# Basic rate limiting (no IP usage): global + per pseudonym/anon.
+		if not self.server.rate_limiter.allow("POST:/message"):
+			self._send_error_json(status=429, message="Rate limit exceeded")
+			return
+		if not self.server.rate_limiter.allow(pseudo_key):
+			self._send_error_json(status=429, message="Rate limit exceeded")
+			return
+
+		timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+		message = {
+			"timestamp": timestamp,
+			"pseudonym": pseudo_value,
+			"content": content,
+		}
+		self.server.store.add(message)
+		self._send_json(status=201, obj={"ok": True})
+
+
+@dataclass
+class WebServerHandle:
+	server: BulletinHTTPServer
+	thread: threading.Thread
+	store: MessageStore
+
+	def is_alive(self) -> bool:
+		return self.thread.is_alive()
+
+	def stop(self, *, timeout: float = 5.0) -> None:
+		# Idempotent best-effort: tolerate already-stopped server/thread.
+		try:
+			self.server.shutdown()
+		except Exception:
+			pass
+		try:
+			self.server.server_close()
+		except Exception:
+			pass
+		if self.thread.is_alive():
+			self.thread.join(timeout=timeout)
+			if self.thread.is_alive():
+				raise RuntimeError("Web server thread did not stop")
+
+	def clear(self) -> None:
+		self.store.clear()
+
+
+def launch_local_web_server(*, bind_host: str, port: int) -> WebServerHandle:
 	if bind_host != "127.0.0.1":
-		raise ValueError("Phase 1 requires binding to 127.0.0.1 only")
+		raise ValueError("Phase 2 requires binding to 127.0.0.1 only")
 
-	# This is intentionally minimal (no UI, no files, no persistence). It exists only to
-	# prove the atomic process lifecycle: tor + onion + local web share one lifetime.
-	code = (
-		"import http.server, socketserver, sys\n"
-		"host=sys.argv[1]; port=int(sys.argv[2])\n"
-		"class H(http.server.BaseHTTPRequestHandler):\n"
-		"  def do_GET(self):\n"
-		"    body=b'OK'\n"
-		"    self.send_response(200)\n"
-		"    self.send_header('Content-Type','text/plain')\n"
-		"    self.send_header('Content-Length', str(len(body)))\n"
-		"    self.end_headers()\n"
-		"    self.wfile.write(body)\n"
-		"  def log_message(self, fmt, *args):\n"
-		"    pass\n"
-		"with socketserver.TCPServer((host, port), H) as httpd:\n"
-		"  httpd.serve_forever()\n"
+	store = MessageStore(max_messages=MAX_MESSAGES)
+	# Keep this conservative: allows small bursts but bounds abuse.
+	rate_limiter = TokenBucketRateLimiter(capacity=10.0, refill_per_second=1.0)
+
+	server = BulletinHTTPServer(
+		(bind_host, int(port)),
+		BulletinHandler,
+		store=store,
+		rate_limiter=rate_limiter,
+		max_body_bytes=MAX_REQUEST_BODY_BYTES,
 	)
 
-	return subprocess.Popen(
-		[sys.executable, "-c", code, bind_host, str(port)],
-		stdin=subprocess.DEVNULL,
-		stdout=subprocess.DEVNULL,
-		stderr=subprocess.DEVNULL,
+	thread = threading.Thread(
+		target=server.serve_forever,
+		kwargs={"poll_interval": 0.2},
+		name="torhubgen_web",
+		daemon=False,
 	)
+	thread.start()
+	return WebServerHandle(server=server, thread=thread, store=store)
 
 
 # --- Lifetime enforcement + atomic shutdown monitoring ---
@@ -235,9 +487,15 @@ def enforce_lifetime(
 	lifetime_seconds: int,
 	shutdown: ShutdownSignal,
 	tor_process: subprocess.Popen,
-	web_process: subprocess.Popen,
+	web_server: WebServerHandle,
+	controller: Optional[Controller],
 ) -> None:
 	start = time.monotonic()
+	last_controller_heartbeat = start
+	controller_disconnected = False
+	controller_disconnect_logged = False
+	if controller is not None:
+		_info("Control connection will remain open until teardown")
 
 	while True:
 		if shutdown.is_set():
@@ -245,10 +503,34 @@ def enforce_lifetime(
 
 		# Requirement: unexpected Tor exit MUST terminate immediately.
 		if tor_process.poll() is not None:
-			raise RuntimeError("Tor process exited unexpectedly")
+			rc = tor_process.returncode
+			if controller_disconnected and not controller_disconnect_logged:
+				# This should already have been logged, but ensure we surface it even if the
+				# disconnect and exit happen back-to-back.
+				_warn("Control connection was lost before Tor exit (possible ownership-triggered termination)")
+				controller_disconnect_logged = True
+			_warn(f"Tor exited unexpectedly with code: {_format_returncode(rc)}")
+			raise RuntimeError(f"Tor process exited unexpectedly (returncode={rc})")
 
-		if web_process.poll() is not None:
-			raise RuntimeError("Local web process exited unexpectedly")
+		# Defensive handling: detect unexpected control-channel loss while Tor is alive.
+		# Do not treat this as a normal condition; log it so ownership-triggered termination is diagnosable.
+		if controller is not None and not controller_disconnected:
+			# Heartbeat at a low rate to keep the control connection active and detect drops.
+			if (time.monotonic() - last_controller_heartbeat) >= 2.0:
+				last_controller_heartbeat = time.monotonic()
+				try:
+					if not controller.is_alive():
+						raise RuntimeError("controller.is_alive() returned False")
+					# A minimal NOOP-style call to verify the control channel is responsive.
+					controller.get_info("version")
+				except Exception as exc:
+					controller_disconnected = True
+					controller_disconnect_logged = True
+					_warn(f"Control connection lost while Tor is still running: {exc}")
+
+		# Requirement: local HTTP surface must not outlive Tor.
+		if not web_server.is_alive():
+			raise RuntimeError("Local web server stopped unexpectedly")
 
 		elapsed = time.monotonic() - start
 		if elapsed >= lifetime_seconds:
@@ -277,41 +559,47 @@ def teardown(state: ApplianceState) -> int:
 			teardown_failed = True
 			_warn(f"Failed to DEL_ONION {state.onion_service_id}: {exc}")
 
-	# Stop web process.
-	if state.web_process is not None:
+	# Stop web server and clear in-memory state.
+	if state.web_server is not None:
 		try:
-			state.web_process.terminate()
-			state.web_process.wait(timeout=5)
+			state.web_server.stop(timeout=5.0)
 		except Exception as exc:
 			teardown_failed = True
-			_warn(f"Failed to stop local web process cleanly: {exc}")
-			try:
-				state.web_process.kill()
-			except Exception as exc2:
-				teardown_failed = True
-				_warn(f"Failed to kill local web process: {exc2}")
+			_warn(f"Failed to stop local web server cleanly: {exc}")
+		try:
+			state.web_server.clear()
+		except Exception as exc:
+			teardown_failed = True
+			_warn(f"Failed to clear in-memory message buffer: {exc}")
 
 	# Stop Tor via ControlPort if possible; otherwise terminate the process.
 	if state.controller is not None:
 		if tor_already_exited:
 			# Tor already exited; control connection may already be broken. Closing is best-effort and
 			# must not be classified as a teardown failure in this expected scenario.
+			_info("Closing controller (Tor already exited)")
 			try:
 				state.controller.close()
 			except Exception as exc:
 				_warn(f"Failed to close controller after Tor exit: {exc}")
+			else:
+				_info("Controller disconnected")
 		else:
+			_info("Sending Tor SHUTDOWN via ControlPort")
 			try:
 				state.controller.msg("SIGNAL SHUTDOWN")
 			except Exception as exc:
 				teardown_failed = True
 				_warn(f"Failed to send Tor SHUTDOWN via ControlPort: {exc}")
 			finally:
+				_info("Closing controller")
 				try:
 					state.controller.close()
 				except Exception as exc:
 					teardown_failed = True
 					_warn(f"Failed to close controller: {exc}")
+				else:
+					_info("Controller disconnected")
 
 	if state.tor_process is not None:
 		try:
@@ -330,6 +618,8 @@ def teardown(state: ApplianceState) -> int:
 				except Exception as exc3:
 					teardown_failed = True
 					_warn(f"Failed to kill Tor process: {exc3}")
+		# Returncode is known after wait/terminate/kill attempts.
+		_info(f"Tor exit code: {_format_returncode(state.tor_process.returncode)}")
 
 	# Remove temporary DataDirectory.
 	try:
@@ -405,7 +695,7 @@ def main(argv: list[str]) -> int:
 		control_port=0,
 		controller=None,
 		onion_service_id=None,
-		web_process=None,
+		web_server=None,
 	)
 
 	exit_code = 0
@@ -420,7 +710,8 @@ def main(argv: list[str]) -> int:
 
 		# 2) Start local web process (127.0.0.1 only).
 		web_port = _pick_free_port("127.0.0.1")
-		state.web_process = launch_local_web_process(bind_host="127.0.0.1", port=web_port)
+		state.web_server = launch_local_web_server(bind_host="127.0.0.1", port=web_port)
+		_info(f"Local web server listening on http://127.0.0.1:{web_port}")
 
 		# 3) Connect to Tor ControlPort and create V3 ephemeral onion service.
 		try:
@@ -443,7 +734,8 @@ def main(argv: list[str]) -> int:
 			lifetime_seconds=lifetime_seconds,
 			shutdown=shutdown,
 			tor_process=state.tor_process,
-			web_process=state.web_process,
+			web_server=state.web_server,
+			controller=state.controller,
 		)
 
 		# enforce_lifetime always raises on expiry/signal/error.
