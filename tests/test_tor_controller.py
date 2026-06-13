@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from torhubgen.tor_controller import add_ephemeral_v3_onion
+import pytest
+
 import torhubgen.tor_controller as tor_controller
+from torhubgen.tor_controller import (
+    add_ephemeral_v3_onion,
+    authenticate_controller_safecookie,
+    connect_controller,
+)
 
 
 SERVICE_ID = "a" * 56
@@ -35,6 +41,52 @@ class FakeController:
         return self.response
 
 
+class FakeProtocolInfo:
+    def __init__(self, auth_methods, *, cookie_path: str | None = "control_auth_cookie") -> None:
+        self.auth_methods = tuple(auth_methods)
+        self.cookie_path = cookie_path
+
+
+class FakeAuthController:
+    def __init__(self) -> None:
+        self.closed = False
+        self.post_authenticated = False
+
+    def close(self) -> None:
+        self.closed = True
+
+    def _post_authentication(self) -> None:
+        self.post_authenticated = True
+
+
+class FakeStemConnectionModule:
+    class AuthMethod:
+        SAFECOOKIE = "Safecookie"
+        COOKIE = "Cookie"
+
+    def __init__(
+        self,
+        *,
+        protocolinfo: FakeProtocolInfo | None = None,
+        protocolinfo_error: Exception | None = None,
+        auth_error: Exception | None = None,
+    ) -> None:
+        self.protocolinfo = protocolinfo
+        self.protocolinfo_error = protocolinfo_error
+        self.auth_error = auth_error
+        self.authenticate_calls: list[tuple[object, str]] = []
+
+    def get_protocolinfo(self, controller):
+        if self.protocolinfo_error is not None:
+            raise self.protocolinfo_error
+        return self.protocolinfo
+
+    def authenticate_safecookie(self, controller, cookie_path: str) -> None:
+        self.authenticate_calls.append((controller, cookie_path))
+        if self.auth_error is not None:
+            raise self.auth_error
+
+
 def test_add_ephemeral_v3_onion_uses_single_v3_discardpk_command() -> None:
     controller = FakeController(FakeResponse([("ServiceID", SERVICE_ID)]))
     service_id = add_ephemeral_v3_onion(controller=controller, target_port=12345)
@@ -58,3 +110,86 @@ def test_add_ephemeral_v3_onion_parses_string_responses() -> None:
     controller = FakeController(response)
 
     assert add_ephemeral_v3_onion(controller=controller, target_port=80) == SERVICE_ID
+
+
+def test_safecookie_auth_is_accepted_when_available() -> None:
+    controller = FakeAuthController()
+    stem_connection = FakeStemConnectionModule(
+        protocolinfo=FakeProtocolInfo(
+            [
+                FakeStemConnectionModule.AuthMethod.SAFECOOKIE,
+                FakeStemConnectionModule.AuthMethod.COOKIE,
+            ],
+            cookie_path="safe_cookie_path",
+        )
+    )
+
+    authenticate_controller_safecookie(controller, stem_connection)
+
+    assert stem_connection.authenticate_calls == [(controller, "safe_cookie_path")]
+    assert controller.post_authenticated is True
+
+
+def test_cookie_only_authentication_is_rejected() -> None:
+    controller = FakeAuthController()
+    stem_connection = FakeStemConnectionModule(
+        protocolinfo=FakeProtocolInfo([FakeStemConnectionModule.AuthMethod.COOKIE])
+    )
+
+    with pytest.raises(RuntimeError, match="requires SAFECOOKIE"):
+        authenticate_controller_safecookie(controller, stem_connection)
+
+    assert stem_connection.authenticate_calls == []
+    assert controller.post_authenticated is False
+
+
+def test_unsupported_control_auth_fails_closed() -> None:
+    controller = FakeAuthController()
+    stem_connection = FakeStemConnectionModule(
+        protocolinfo_error=RuntimeError("protocolinfo failed")
+    )
+
+    with pytest.raises(RuntimeError, match="requires SAFECOOKIE authentication"):
+        authenticate_controller_safecookie(controller, stem_connection)
+
+    assert stem_connection.authenticate_calls == []
+    assert controller.post_authenticated is False
+
+
+def test_connect_controller_closes_socket_on_safecookie_failure(monkeypatch) -> None:
+    created = {}
+
+    class FakeControllerClass(FakeAuthController):
+        @classmethod
+        def from_port(cls, *, address: str, port: int):
+            controller = cls()
+            created["controller"] = controller
+            created["address"] = address
+            created["port"] = port
+            return controller
+
+    stem_connection = FakeStemConnectionModule(
+        protocolinfo=FakeProtocolInfo(
+            [FakeStemConnectionModule.AuthMethod.SAFECOOKIE],
+            cookie_path="safe_cookie_path",
+        ),
+        auth_error=RuntimeError("challenge failed"),
+    )
+
+    monkeypatch.setattr(
+        tor_controller,
+        "load_stem_dependencies",
+        lambda: (FakeControllerClass, object()),
+    )
+    monkeypatch.setattr(
+        tor_controller,
+        "load_stem_connection",
+        lambda: stem_connection,
+    )
+
+    with pytest.raises(RuntimeError, match="SAFECOOKIE authentication failed"):
+        connect_controller(9051)
+
+    assert created["address"] == "127.0.0.1"
+    assert created["port"] == 9051
+    assert created["controller"].closed is True

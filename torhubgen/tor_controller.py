@@ -23,6 +23,17 @@ def load_stem_dependencies():
     return Controller, launch_tor_with_config
 
 
+def load_stem_connection():
+    try:
+        import stem.connection as stem_connection
+    except Exception as exc:  # pragma: no cover
+        raise StemDependencyMissing(
+            "stem is required to launch TorHubGen. Install with: pip install stem\n"
+            f"Import error: {exc}"
+        ) from exc
+    return stem_connection
+
+
 def pick_free_port(bind_host: str = "127.0.0.1") -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((bind_host, 0))
@@ -68,19 +79,60 @@ def launch_private_tor(
     return proc, control_port
 
 
+def authenticate_controller_safecookie(controller, stem_connection) -> None:
+    try:
+        protocolinfo = stem_connection.get_protocolinfo(controller)
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to query Tor ControlPort authentication methods. "
+            "TorHubGen requires SAFECOOKIE authentication. "
+            f"Error: {exc}"
+        ) from exc
+
+    auth_methods = tuple(protocolinfo.auth_methods)
+    if stem_connection.AuthMethod.SAFECOOKIE not in auth_methods:
+        offered = ", ".join(str(method) for method in auth_methods) if auth_methods else "none"
+        raise RuntimeError(
+            "Tor ControlPort did not advertise SAFECOOKIE authentication "
+            f"(offered: {offered}). TorHubGen requires SAFECOOKIE and refuses "
+            "to fall back to COOKIE authentication."
+        )
+
+    if not protocolinfo.cookie_path:
+        raise RuntimeError(
+            "Tor ControlPort advertised SAFECOOKIE but did not provide a cookie path. "
+            "TorHubGen requires SAFECOOKIE and refuses to continue."
+        )
+
+    try:
+        stem_connection.authenticate_safecookie(controller, protocolinfo.cookie_path)
+    except Exception as exc:
+        raise RuntimeError(
+            "SAFECOOKIE authentication failed. TorHubGen requires SAFECOOKIE "
+            "and refuses to fall back to COOKIE authentication. "
+            f"Error: {exc}"
+        ) from exc
+
+    post_authentication = getattr(controller, "_post_authentication", None)
+    if callable(post_authentication):
+        post_authentication()
+
+
 def connect_controller(control_port: int):
     Controller, _ = load_stem_dependencies()
+    stem_connection = load_stem_connection()
     controller = Controller.from_port(address="127.0.0.1", port=control_port)
-    # This currently relies on Stem's authenticate() abstraction rather than a
-    # hand-rolled SAFECOOKIE-only flow. In Stem 1.8.x that negotiates methods
-    # from PROTOCOLINFO and prefers SAFECOOKIE before COOKIE when both are
-    # offered, but TorHubGen does not yet assert SAFECOOKIE-only behavior itself.
-    # TODO: Once Stem usage is part of the validated environment, evaluate
-    # whether TorHubGen should require an explicit SAFECOOKIE-only flow here.
-    controller.authenticate()
+    try:
+        authenticate_controller_safecookie(controller, stem_connection)
+    except Exception:
+        try:
+            controller.close()
+        except Exception:
+            pass
+        raise
     info(
         "Connected to Tor ControlPort on 127.0.0.1:"
-        f"{control_port} using Stem authenticate()"
+        f"{control_port} using explicit SAFECOOKIE authentication"
     )
     return controller
 

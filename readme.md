@@ -34,9 +34,10 @@ Current CLI entry points from the repository root:
 - `python atomic_wrapper.py --lifetime-seconds 300`  
   Compatibility path for the previous single-file entrypoint.
 
-Tor control authentication currently uses Stem's `authenticate()` abstraction. In
-Stem 1.8.x this prefers `SAFECOOKIE` before `COOKIE` when both are offered by
-Tor, but TorHubGen does not yet enforce a `SAFECOOKIE`-only policy itself.
+Tor control authentication is enforced as `SAFECOOKIE`-only. TorHubGen queries
+Tor's advertised control-port auth methods and fails closed if `SAFECOOKIE` is
+not offered or cannot be completed successfully. It does not fall back to
+legacy `COOKIE` authentication.
 
 ---
 

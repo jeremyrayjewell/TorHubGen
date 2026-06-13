@@ -7,7 +7,12 @@ import tempfile
 
 import pytest
 
-from torhubgen.tor_controller import add_ephemeral_v3_onion, connect_controller, launch_private_tor
+from torhubgen.tor_controller import (
+    add_ephemeral_v3_onion,
+    connect_controller,
+    launch_private_tor,
+    load_stem_connection,
+)
 
 
 pytestmark = pytest.mark.integration
@@ -29,6 +34,9 @@ def test_real_tor_launch_and_ephemeral_onion_creation() -> None:
     try:
         tor_process, control_port = launch_private_tor(tor_cmd=None, data_dir=data_dir)
         controller = connect_controller(control_port)
+        stem_connection = load_stem_connection()
+        protocolinfo = stem_connection.get_protocolinfo(controller)
+        assert stem_connection.AuthMethod.SAFECOOKIE in protocolinfo.auth_methods
         service_id = add_ephemeral_v3_onion(controller=controller, target_port=1)
         assert len(service_id) == 56
     finally:
