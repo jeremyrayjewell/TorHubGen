@@ -10,12 +10,33 @@ TorHubGen is **not** a platform, not a hosted service, and not a promise of safe
 
 ## Status
 
-- **Stage:** Threat model complete; implementation in progress  
+- **Stage:** Threat model complete; early implementation in progress  
 - **Build/use:** Not yet recommended for real-world use  
+- **Current engineering goal:** prove and test core lifecycle properties for a narrow Alpha 0.1  
 - **Roadmap:** Not promised  
 - **Authority:** `docs/threat-model.md` is authoritative and constraining  
 
 The threat model explicitly allows for the possibility that this project should **not ship** if implementation cannot meet its safety and scope constraints.
+
+Current implementation work is focused on:
+
+- explicit lifetime enforcement
+- localhost-only binding
+- ephemeral onion creation
+- loud, testable teardown behavior
+
+This repository still does **not** make anonymity, safety, confidentiality, or legal-protection claims.
+
+Current CLI entry points from the repository root:
+
+- `python -m torhubgen --lifetime-seconds 300`
+- `python -m torhubgen selfcheck`
+- `python atomic_wrapper.py --lifetime-seconds 300`  
+  Compatibility path for the previous single-file entrypoint.
+
+Tor control authentication currently uses Stem's `authenticate()` abstraction. In
+Stem 1.8.x this prefers `SAFECOOKIE` before `COOKIE` when both are offered by
+Tor, but TorHubGen does not yet enforce a `SAFECOOKIE`-only policy itself.
 
 ---
 
