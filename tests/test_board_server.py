@@ -63,6 +63,9 @@ def test_only_expected_endpoints_are_valid() -> None:
     with running_server() as handle:
         base_url = f"http://127.0.0.1:{handle.port}"
 
+        status, _ = request("GET", f"{base_url}/")
+        assert status == 200
+
         status, body = request("GET", f"{base_url}/messages")
         assert status == 200
         assert json.loads(body) == {"messages": []}
@@ -71,11 +74,59 @@ def test_only_expected_endpoints_are_valid() -> None:
         assert status == 201
         assert json.loads(body) == {"ok": True}
 
-        status, _ = request("GET", f"{base_url}/")
-        assert status == 404
-
         status, _ = request("POST", f"{base_url}/messages", payload={"content": "hello"})
         assert status == 404
+
+
+def test_home_page_returns_html() -> None:
+    with running_server() as handle:
+        base_url = f"http://127.0.0.1:{handle.port}"
+
+        status, body = request("GET", f"{base_url}/")
+        text = body.decode("utf-8")
+
+        assert status == 200
+        assert "<!doctype html>" in text.lower()
+        assert "<h1>TorHubGen Bulletin Board</h1>" in text
+        assert "ephemeral" in text
+        assert "<form id='message-form'>" in text
+        assert "Messages are stored only in memory" in text
+
+
+def test_home_page_shows_empty_state_when_no_messages() -> None:
+    with running_server() as handle:
+        base_url = f"http://127.0.0.1:{handle.port}"
+
+        status, body = request("GET", f"{base_url}/")
+        text = body.decode("utf-8")
+
+        assert status == 200
+        assert "No messages yet. This board starts empty each time TorHubGen runs." in text
+
+
+def test_home_page_escapes_user_content() -> None:
+    with running_server() as handle:
+        base_url = f"http://127.0.0.1:{handle.port}"
+
+        status, _ = request(
+            "POST",
+            f"{base_url}/message",
+            payload={
+                "pseudonym": "<b>alice</b>",
+                "content": "<script>alert('x')</script><b>hello</b>",
+            },
+        )
+        assert status == 201
+
+        status, body = request("GET", f"{base_url}/")
+        text = body.decode("utf-8")
+
+        assert status == 200
+        assert "&lt;b&gt;alice&lt;/b&gt;" in text
+        assert "&lt;script&gt;alert(&#x27;x&#x27;)&lt;/script&gt;&lt;b&gt;hello&lt;/b&gt;" in text
+        assert "<script>alert('x')</script>" not in text
+        assert "<b>hello</b>" not in text
+        assert "UTC" in text
 
 
 def test_unknown_routes_fail_closed() -> None:
@@ -110,6 +161,33 @@ def test_oversized_posts_are_rejected() -> None:
         )
         assert status == 413
         assert json.loads(body)["error"] == "Message too long"
+
+
+def test_invalid_json_is_rejected() -> None:
+    with running_server() as handle:
+        base_url = f"http://127.0.0.1:{handle.port}"
+        status, body = request(
+            "POST",
+            f"{base_url}/message",
+            payload=b"{not-json}",
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert status == 400
+        assert json.loads(body)["error"] == "Invalid JSON"
+
+
+def test_invalid_schema_is_rejected() -> None:
+    with running_server() as handle:
+        base_url = f"http://127.0.0.1:{handle.port}"
+        status, body = request(
+            "POST",
+            f"{base_url}/message",
+            payload={"content": 123},
+        )
+
+        assert status == 400
+        assert json.loads(body)["error"] == "Field 'content' must be a string"
 
 
 def test_basic_rate_limiting_blocks_second_post() -> None:
