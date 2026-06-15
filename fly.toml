@@ -1,18 +1,21 @@
-# Replace this with a unique Fly app name before deploying.
-app = "torhubgen-001"
-primary_region = "dfw"
+# fly.toml app configuration file generated for torhubgen-001 on 2026-06-15T05:59:11-05:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'torhubgen-001'
+primary_region = 'dfw'
 
 [build]
-  dockerfile = "Dockerfile"
-
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
-  persist_rootfs = "never"
+  dockerfile = 'Dockerfile'
 
 [[restart]]
-  policy = "never"
+  policy = 'never'
 
-# Intentionally no [http_service] or [[services]] block.
-# TorHubGen should remain reachable only through the ephemeral onion address
-# printed in logs, not through a public Fly HTTP service.
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 256
+  persist_rootfs = 'never'
