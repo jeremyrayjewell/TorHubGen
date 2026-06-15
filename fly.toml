@@ -1,0 +1,18 @@
+# Replace this with a unique Fly app name before deploying.
+app = "replace-with-your-fly-app-name"
+primary_region = "dfw"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  persist_rootfs = "never"
+
+[[restart]]
+  policy = "never"
+
+# Intentionally no [http_service] or [[services]] block.
+# TorHubGen should remain reachable only through the ephemeral onion address
+# printed in logs, not through a public Fly HTTP service.

@@ -130,6 +130,28 @@ Current web/API surface:
 - `GET /messages` returns the current in-memory message list as JSON
 - `POST /message` expects JSON with a required `"content"` string and an optional `"pseudonym"` string
 
+## Limited Fly.io Onion Deployment Test
+
+This repository now includes a minimal `Dockerfile`, `.dockerignore`, and `fly.toml` draft for an experimental Fly.io deployment path. It is meant for short-lived onion-service testing only, not for a public web deployment.
+
+Important constraints for this deployment model:
+
+- keep TorHubGen's local HTTP server bound to `127.0.0.1`
+- do **not** add a public Fly `[http_service]` or `[[services]]` block
+- access the app only through the ephemeral `.onion` address printed in logs
+- every run gets a new ephemeral onion address
+- messages remain in memory only and disappear when the process ends
+
+Example Fly workflow:
+
+```powershell
+fly launch --no-deploy
+fly deploy
+fly logs -a <app-name>
+```
+
+Before deploying, replace the placeholder app name in `fly.toml` with your own Fly app name. Do not expose the local HTTP port as a public Fly service for this project.
+
 ## SAFECOOKIE Security Note
 
 Tor's ControlPort is a privileged interface. TorHubGen does **not** use unauthenticated control connections, password auth, or a silent fallback to legacy `COOKIE` authentication.
