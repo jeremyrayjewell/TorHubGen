@@ -34,8 +34,9 @@ Current implementation is intentionally limited to:
 - one private Tor process
 - one ephemeral v3 onion service
 - one minimal in-memory bulletin board
+- `GET /` for a minimal browser UI
 - `GET /messages`
-- `POST /message`
+- `POST /message` with JSON: required `"content"` string and optional `"pseudonym"` string
 - explicit shutdown and teardown behavior
 
 ## What TorHubGen Does Today
@@ -46,6 +47,7 @@ From the current codebase, TorHubGen:
 - opens a localhost-only ControlPort with Tor cookie auth enabled
 - requires explicit SAFECOOKIE control authentication before proceeding
 - starts a small localhost-only HTTP server
+- serves a minimal browser UI at `GET /`
 - maps that server to a single ephemeral onion service
 - keeps message data in memory only
 - enforces a maximum runtime of 1 hour
@@ -121,6 +123,12 @@ The older entrypoint still works as a compatibility shim:
 ```powershell
 python atomic_wrapper.py --lifetime-seconds 300
 ```
+
+Current web/API surface:
+
+- `GET /` serves a minimal browser UI for viewing and posting messages
+- `GET /messages` returns the current in-memory message list as JSON
+- `POST /message` expects JSON with a required `"content"` string and an optional `"pseudonym"` string
 
 ## SAFECOOKIE Security Note
 
