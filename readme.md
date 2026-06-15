@@ -1,178 +1,195 @@
 # TorHubGen
 
-TorHubGen is a **self-deploying, ephemeral, Tor-only bulletin board appliance**.
+TorHubGen is an early-stage Python project for running a short-lived Tor onion service in a more controlled, testable way.
 
-This repository documents and implements a narrowly scoped project whose primary goal is to reduce **operational and lifecycle mistakes** when hosting short-lived, forum-style communications over Tor. The project is intentionally conservative, threat-model–driven, and designed to avoid creating false confidence.
+The current implementation launches a private Tor instance, creates one ephemeral v3 onion service, exposes a minimal localhost-only bulletin-board HTTP surface, enforces a required lifetime, and tears the appliance down loudly when the run ends or something fails.
 
-TorHubGen is **not** a platform, not a hosted service, and not a promise of safety or anonymity.
+This repository is intentionally narrow. It is about lifecycle correctness, explicit teardown, and safer operational defaults, not about adding a full forum platform or making security guarantees.
 
----
+## What Problem It Solves
 
-## Status
+TorHubGen is aimed at a specific operational problem:
 
-- **Stage:** Threat model complete; early implementation in progress  
-- **Build/use:** Not yet recommended for real-world use  
-- **Current engineering goal:** prove and test core lifecycle properties for a narrow Alpha 0.1  
-- **Roadmap:** Not promised  
-- **Authority:** `docs/threat-model.md` is authoritative and constraining  
+- temporary Tor hidden-service experiments are easy to misconfigure
+- teardown is often treated as an afterthought
+- persistent state and silent failures can outlive the intended session
+- security-sensitive behavior is easy to oversell or leave implicit
 
-The threat model explicitly allows for the possibility that this project should **not ship** if implementation cannot meet its safety and scope constraints.
+TorHubGen tries to reduce those mistakes by keeping the design small and auditable:
 
-Current implementation work is focused on:
+- explicit runtime lifetime is mandatory
+- the local web service binds only to `127.0.0.1`
+- the onion service is ephemeral and created with `ADD_ONION NEW:ED25519-V3 Flags=DiscardPK`
+- cleanup is attempted automatically and failures are surfaced instead of hidden
 
-- explicit lifetime enforcement
-- localhost-only binding
-- ephemeral onion creation
-- loud, testable teardown behavior
+## Current Status
 
-This repository still does **not** make anonymity, safety, confidentiality, or legal-protection claims.
+- **Stage:** threat model complete, early implementation in progress
+- **Current focus:** proving lifecycle guarantees and testability
+- **Real-world use:** not recommended
+- **Authority:** [docs/threat-model.md](docs/threat-model.md) is the project's constraining document
 
-Current CLI entry points from the repository root:
+Current implementation is intentionally limited to:
 
-- `python -m torhubgen --lifetime-seconds 300`
-- `python -m torhubgen selfcheck`
-- `python atomic_wrapper.py --lifetime-seconds 300`  
-  Compatibility path for the previous single-file entrypoint.
+- one private Tor process
+- one ephemeral v3 onion service
+- one minimal in-memory bulletin board
+- `GET /messages`
+- `POST /message`
+- explicit shutdown and teardown behavior
 
-Tor control authentication is enforced as `SAFECOOKIE`-only. TorHubGen queries
-Tor's advertised control-port auth methods and fails closed if `SAFECOOKIE` is
-not offered or cannot be completed successfully. It does not fall back to
-legacy `COOKIE` authentication.
+## What TorHubGen Does Today
 
----
+From the current codebase, TorHubGen:
 
-## What this project is
+- launches Tor with an isolated temporary `DataDirectory`
+- opens a localhost-only ControlPort with Tor cookie auth enabled
+- requires explicit SAFECOOKIE control authentication before proceeding
+- starts a small localhost-only HTTP server
+- maps that server to a single ephemeral onion service
+- keeps message data in memory only
+- enforces a maximum runtime of 1 hour
+- shuts down if Tor exits unexpectedly
+- attempts teardown of the onion service, web server, in-memory state, Tor process, and temp directory
 
-TorHubGen is designed to:
-
-- Launch a local **Tor onion service**
-- Host a **minimal, forum-style bulletin board**
-- Run for a **fixed, declared lifetime**
-- Attempt **automatic teardown and data removal** on expiration or termination
-- Make failure to tear down **visible and explicit**
-
-The bulletin board supports:
-- Public threaded posts
-- Optional, **ephemeral private messages** between active participants  
-  (temporary, session-scoped, disabled by default)
-
-All functionality exists **only for the lifetime of the running instance**.
-
----
-
-## What this project is not
+## What It Does Not Do
 
 TorHubGen is **not**:
 
-- a persistent forum or community platform
-- a messaging or chat application
-- a file-sharing or file-transfer service
-- a hosting provider
-- a general-purpose Tor deployment tool
-- a safety, anonymity, or confidentiality guarantee
-- suitable for high-risk environments by default
+- a production-ready hosting tool
+- a persistent forum or messaging platform
+- a file-sharing tool
+- a clearnet/Tor hybrid deployment utility
+- an anonymity, confidentiality, or legal-protection guarantee
+- a project suitable for high-risk situations by default
 
-It does **not** protect against:
+It does **not** solve:
 
-- compromised devices
-- malicious or dishonest participants
+- endpoint compromise
+- participant leaks
 - traffic analysis or correlation
-- copying, recording, or redistribution of content
-- legal or physical harm
+- copied or redistributed content
+- real-world legal or physical risk
 
----
+## Requirements
 
-## Design philosophy
+Runtime requirements:
 
-TorHubGen is built around the following principles:
+- Python 3.10+  
+  The code uses modern type syntax and has been exercised in a Python 3.13 environment.
+- A Tor binary available on `PATH`, or an explicit path passed via `--tor-cmd`
+- The Python `stem` library for Tor control-port interactions
 
-- **Ephemerality is enforced**, not optional  
-- **Teardown is a first-class concern**, not an afterthought  
-- **Mistake prevention outweighs convenience**  
-- **Scope creep is treated as a security regression**  
-- **False confidence is considered a primary hazard**
+Development and test requirements:
 
-The project intentionally limits features, adds friction at dangerous points, and rejects designs that imply protection it cannot provide.
+- `pytest` for the test suite
 
----
+## Basic Setup
 
-## Private messaging (clarification)
+Example setup from the repository root:
 
-TorHubGen may optionally support **temporary private messages**:
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install stem pytest
+```
 
-- Messages exist only while the board is running
-- No inboxes, archives, or offline delivery
-- No delivery guarantees
-- No confidentiality guarantees
-- Messages may be copied or recorded by recipients
-- Automatically disabled when the board expires
+If Tor is not on `PATH`, keep its executable path available for `--tor-cmd`.
 
-Private messaging does **not** make communication safer than public posting.
+## Basic Usage
 
----
+Run the built-in preflight checks:
 
-## External links and file sharing
+```powershell
+python -m torhubgen selfcheck
+```
 
-TorHubGen does **not** manage or host files.
+Start a short-lived appliance run:
 
-Users may choose to share **external links** (for example, OnionShare links) within posts or private messages. Such links are treated as opaque text.
+```powershell
+python -m torhubgen --lifetime-seconds 300
+```
 
-TorHubGen:
-- does not verify, preview, or manage external links
-- does not coordinate lifecycles with external tools
-- does not vouch for the safety of linked content
+Use an explicit Tor executable if needed:
 
-Files shared via external links may be malicious. Users must assess risk independently.
+```powershell
+python -m torhubgen --lifetime-seconds 300 --tor-cmd C:\path\to\tor.exe
+```
 
----
+The older entrypoint still works as a compatibility shim:
 
-## Read the threat model first
+```powershell
+python atomic_wrapper.py --lifetime-seconds 300
+```
 
-**Do not treat this repository as a finished tool.**
+## SAFECOOKIE Security Note
 
-Start with:
+Tor's ControlPort is a privileged interface. TorHubGen does **not** use unauthenticated control connections, password auth, or a silent fallback to legacy `COOKIE` authentication.
 
-- `docs/threat-model.md`
+Instead, it explicitly requires `SAFECOOKIE`, which is Tor's challenge-response method built around a local authentication cookie. At startup, TorHubGen:
 
-That document defines:
+- queries Tor for supported control-port auth methods
+- verifies that `SAFECOOKIE` is offered
+- uses Stem's SAFECOOKIE flow directly
+- fails closed if SAFECOOKIE is unavailable or the auth exchange fails
 
-- the exact problem scope
-- explicit non-goals
-- attacker models
-- acceptable vs unacceptable risks
-- design constraints
-- expected failure modes
-- mandatory safety language
+This matters because the project is trying to make security-sensitive control behavior explicit instead of relying on looser defaults.
 
-Any code or feature that contradicts the threat model should be treated as **incorrect by definition**.
+## Running Tests
 
----
+Run the main test suite:
 
-## Contributions
+```powershell
+python -m pytest -q
+```
 
-Contributions are not currently solicited.
+Run the opt-in real Tor integration test:
 
-If this project progresses, contributions (if accepted) will be evaluated **primarily against the threat model**, not feature requests or usability goals. Features that expand scope, introduce persistence, or increase user confidence without real protection will be rejected.
+```powershell
+$env:TORHUBGEN_RUN_TOR_INTEGRATION='1'
+python -m pytest -q tests\test_real_tor_integration.py
+```
 
----
+The integration test requires:
 
-## Non-endorsement
+- a real Tor binary available on `PATH`
+- `stem` installed
 
-The existence of this project does **not** imply that using Tor, onion services, or TorHubGen is advisable in any particular situation.
+## Repository Highlights
 
-TorHubGen cannot evaluate your threat environment.  
-If you are under real risk, seek qualified, context-specific guidance.
+- [torhubgen/tor_controller.py](torhubgen/tor_controller.py): Tor process launch, SAFECOOKIE authentication, and onion-service creation
+- [torhubgen/lifecycle.py](torhubgen/lifecycle.py): runtime orchestration, lifetime enforcement, signal handling, and fail-closed shutdown behavior
+- [torhubgen/board_server.py](torhubgen/board_server.py): localhost-only in-memory HTTP surface with bounded request handling and simple rate limiting
+- [torhubgen/teardown.py](torhubgen/teardown.py): explicit teardown reporting for each cleanup step
+- [tests/](tests/): unit tests with fakes and mocks plus an opt-in real Tor integration test
 
----
+## Skills This Project Demonstrates
+
+This repo is a good snapshot of the kinds of work relevant to IT Support, Technical Support, and security-adjacent engineering roles:
+
+- Python troubleshooting and maintainable CLI code
+- service lifecycle management and teardown handling
+- reading and enforcing documented requirements
+- defensive authentication behavior and fail-closed thinking
+- localhost-only service hardening
+- structured testing with unit and integration coverage
+- debugging and documenting environment-dependent issues
+- writing clear operator-facing error messages and technical documentation
+
+## Read the Threat Model First
+
+This repository should be interpreted through its design constraints, not as a finished product. Start with:
+
+- [docs/threat-model.md](docs/threat-model.md)
+- [docs/development_process.md](docs/development_process.md)
+
+If code and documentation disagree with the threat model, the threat model wins.
 
 ## License
 
-License not yet selected.  
-No guarantees are made regarding future availability or support.
-
----
+License not yet selected. No guarantees are made regarding future availability or support.
 
 ## Author
 
 Jeremy Ray Jewell  
-[GitHub](https://github.com/jeremyrayjewell) · [LinkedIn](https://www.linkedin.com/in/jeremyrayjewell)
+[GitHub](https://github.com/jeremyrayjewell) | [LinkedIn](https://www.linkedin.com/in/jeremyrayjewell)

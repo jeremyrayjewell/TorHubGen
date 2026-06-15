@@ -80,6 +80,8 @@ def launch_private_tor(
 
 
 def authenticate_controller_safecookie(controller, stem_connection) -> None:
+    # Query PROTOCOLINFO ourselves so TorHubGen can enforce SAFECOOKIE-only
+    # behavior instead of leaving room for a library-level fallback to COOKIE.
     try:
         protocolinfo = stem_connection.get_protocolinfo(controller)
     except Exception as exc:
@@ -113,6 +115,8 @@ def authenticate_controller_safecookie(controller, stem_connection) -> None:
             f"Error: {exc}"
         ) from exc
 
+    # We bypass Controller.authenticate(), so we need Stem's post-auth hook to
+    # mark the controller object authenticated after a successful challenge.
     post_authentication = getattr(controller, "_post_authentication", None)
     if callable(post_authentication):
         post_authentication()
