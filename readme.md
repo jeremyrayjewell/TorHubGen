@@ -26,6 +26,7 @@ TorHubGen tries to reduce those mistakes by keeping the design small and auditab
 
 - **Stage:** threat model complete, early implementation in progress
 - **Current focus:** proving lifecycle guarantees and testability
+- **Recent validation:** local real-Tor runs and a limited Fly.io onion deployment test have completed successfully
 - **Real-world use:** not recommended
 - **Authority:** [docs/threat-model.md](docs/threat-model.md) is the project's constraining document
 
@@ -132,7 +133,7 @@ Current web/API surface:
 
 ## Limited Fly.io Onion Deployment Test
 
-This repository now includes a minimal `Dockerfile`, `.dockerignore`, and `fly.toml` draft for an experimental Fly.io deployment path. It is meant for short-lived onion-service testing only, not for a public web deployment.
+This repository now includes a minimal `Dockerfile`, `.dockerignore`, and `fly.toml` draft for an experimental Fly.io deployment path. A limited onion-only Fly.io deployment test has passed, but this remains a narrow, early-stage deployment path rather than a general hosting recommendation.
 
 Important constraints for this deployment model:
 
@@ -151,6 +152,32 @@ fly logs -a <app-name>
 ```
 
 Before deploying, replace the placeholder app name in `fly.toml` with your own Fly app name. Do not expose the local HTTP port as a public Fly service for this project.
+
+## Screenshots / Milestones
+
+### Local TorHubGen Browser UI
+
+![Placeholder screenshot for the local TorHubGen browser UI](docs/assets/screenshots/local-ui-placeholder.png)
+
+Future screenshot: the localhost-served bulletin board UI showing current in-memory messages and the minimal post form.
+
+### Tor Bootstrap, SAFECOOKIE, and Onion Creation Logs
+
+![Placeholder screenshot for successful Tor bootstrap and onion creation logs](docs/assets/screenshots/local-onion-startup-placeholder.png)
+
+Future screenshot: console output showing Tor bootstrap, explicit SAFECOOKIE authentication, and the ephemeral `.onion` address creation message.
+
+### Fly.io Onion Deployment Visible in Tor Browser
+
+![Placeholder screenshot for the Fly.io onion deployment UI](docs/assets/screenshots/fly-onion-ui-placeholder.png)
+
+Future screenshot: the deployed TorHubGen board reached through Tor Browser using the ephemeral Fly-hosted `.onion` address.
+
+### Clean Teardown After Lifetime Expiry
+
+![Placeholder screenshot for teardown after lifetime expiry](docs/assets/screenshots/teardown-placeholder.png)
+
+Future screenshot: logs showing lifetime expiry, shutdown request handling, cleanup steps, and a non-restarting end state.
 
 ## SAFECOOKIE Security Note
 
