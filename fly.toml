@@ -1,5 +1,5 @@
 # Replace this with a unique Fly app name before deploying.
-app = "replace-with-your-fly-app-name"
+app = "torhubgen-001"
 primary_region = "dfw"
 
 [build]
